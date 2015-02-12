@@ -1,5 +1,7 @@
 #include "qhexeditprivate.h"
 
+#include <climits>
+
 QString QHexEditPrivate::UNPRINTABLE_CHAR;
 const int QHexEditPrivate::CURSOR_BLINK_INTERVAL = 500; /* 0.5 sec */
 const qint64 QHexEditPrivate::BYTES_PER_LINE = 0x10;
@@ -21,6 +23,10 @@ QHexEditPrivate::QHexEditPrivate(QScrollArea *scrollarea, QScrollBar *vscrollbar
     this->_lastvisiblelines = this->_lastvscrollpos = this->_baseaddress = this->_cursorX = this->_cursorY = this->_cursorpos = this->_selectionstart = this->_selectionend = this->_charidx = this->_charheight = this->_charwidth = 0;
     this->_selpart = QHexEditPrivate::HexPart;
     this->_insmode = QHexEditPrivate::Overwrite;
+    this->_vscrollvalue = 0;
+    this->_vscrollrange = 0;
+    this->_vscrollmultiplier = 1;
+    this->_vscrollupdating = false;
 
     connect(this->_vscrollbar, SIGNAL(valueChanged(int)), this, SLOT(onVScrollBarValueChanged(int)));
     connect(this->_vscrollbar, SIGNAL(valueChanged(int)), this, SIGNAL(verticalScrollBarValueChanged(int)));
@@ -224,7 +230,12 @@ void QHexEditPrivate::ensureVisible()
     qint64 currline = this->verticalSliderPosition64() + (this->_cursorY / this->_charheight);
 
     if(currline <= this->verticalSliderPosition64() || currline >= (this->verticalSliderPosition64() + vislines))
-        this->_vscrollbar->setValue(qMax(currline - (vislines / 2), qint64(0)));
+    {
+        this->_vscrollvalue = qMax(currline - (vislines / 2), qint64(0));
+        this->_vscrollupdating = true;
+        this->_vscrollbar->setSliderPosition(this->_vscrollvalue / this->_vscrollmultiplier);
+        this->_vscrollupdating = false;
+    }
 }
 
 void QHexEditPrivate::adjust()
@@ -247,7 +258,17 @@ void QHexEditPrivate::adjust()
         /* Setup Vertical ScrollBar */
         if(totLines > visLines)
         {
-            this->_vscrollbar->setRange(0, (totLines - visLines) + 1);
+            this->_vscrollrange = (totLines - visLines) + 1;
+            if(_vscrollrange < INT_MAX)
+            {
+                this->_vscrollmultiplier = 1;
+                this->_vscrollbar->setRange(0, this->_vscrollrange);
+            }
+            else
+            {
+                this->_vscrollmultiplier = (this->_vscrollrange / INT_MAX) + 1;
+                this->_vscrollbar->setRange(0, this->_vscrollrange / this->_vscrollmultiplier);
+            }
             this->_vscrollbar->setSingleStep(1);
             this->_vscrollbar->setPageStep(visLines);
             this->_vscrollbar->show();
@@ -375,6 +396,7 @@ void QHexEditPrivate::setSelectedCursorBrush(const QBrush &b)
 
 void QHexEditPrivate::setVerticalScrollBarValue(int value)
 {
+    //this->_vscrollvalue = value * this->_vscrolldivisor;
     this->_vscrollbar->setValue(value);
 }
 
@@ -974,7 +996,7 @@ qint64 QHexEditPrivate::cursorPosFromPoint(const QPoint &pt, int *charindex)
 
 qint64 QHexEditPrivate::verticalSliderPosition64()
 {
-    return static_cast<qint64>(this->_vscrollbar->sliderPosition());
+    return this->_vscrollvalue;
 }
 
 void QHexEditPrivate::colorize(uchar b, qint64 pos, QColor &bchex, QColor &fchex, QColor &bcascii, QColor &fcascii)
@@ -1116,8 +1138,8 @@ void QHexEditPrivate::wheelEvent(QWheelEvent *event)
 
         if(event->orientation() == Qt::Vertical)
         {
-            int pos = this->verticalSliderPosition64() - (numSteps * this->_whellscrolllines);
-            int maxlines = this->_hexeditdata->length() / QHexEditPrivate::BYTES_PER_LINE;
+            qint64 pos = this->verticalSliderPosition64() - (numSteps * this->_whellscrolllines);
+            qint64 maxlines = this->_hexeditdata->length() / QHexEditPrivate::BYTES_PER_LINE;
 
             /* Bounds Check */
             if(pos < 0)
@@ -1125,7 +1147,10 @@ void QHexEditPrivate::wheelEvent(QWheelEvent *event)
             else if(pos > maxlines)
                 pos = maxlines;
 
-            this->_vscrollbar->setSliderPosition(pos);
+            this->_vscrollvalue = pos;
+            this->_vscrollupdating = true;
+            this->_vscrollbar->setValue(pos / this->_vscrollmultiplier);
+            this->_vscrollupdating = false;
             this->updateCursorXY(this->cursorPos(), this->_charidx);
             this->update();
 
@@ -1172,8 +1197,11 @@ void QHexEditPrivate::blinkCursor()
     this->update(this->_cursorX, this->_cursorY, this->_charwidth, this->_charheight);
 }
 
-void QHexEditPrivate::onVScrollBarValueChanged(int)
+void QHexEditPrivate::onVScrollBarValueChanged(int val)
 {
+    if(!this->_vscrollupdating)
+        this->_vscrollvalue = static_cast<qint64>(val) * this->_vscrollmultiplier;
+
     this->checkVisibleLines();
     this->update();
 }
