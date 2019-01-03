@@ -1131,7 +1131,7 @@ void QHexEditPrivate::mouseMoveEvent(QMouseEvent* event)
 
 void QHexEditPrivate::wheelEvent(QWheelEvent *event)
 {
-    if(this->_hexeditdata->length())
+    if(this->_hexeditdata && this->_hexeditdata->length())
     {
         int numDegrees = event->delta() / 8;
         int numSteps = numDegrees / 15;
